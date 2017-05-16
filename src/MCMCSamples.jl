@@ -1,22 +1,23 @@
 module MCMCSamples
 
 using ArgCheck
+using Lazy
 
 export
     MCMCDraws,
+    MCMCChain,
     pool
-
-######################################################################
-# collections of draws
-######################################################################
 
 const MCMCDrawsVector = AbstractVector
 
 const MCMCDrawsDict = Dict{Symbol, MCMCDrawsVector}
 
+"""
+Structure for storing 
+"""
 struct MCMCDraws
     dict::MCMCDrawsDict
-    function MCMCDraws(dict)
+    function MCMCDraws(dict::MCMCDrawsDict)
         @argcheck !isempty(dict) "Need at least one vector of draws."
         N = length(first(values(dict)))
         @argcheck all(length(x) == N for x in values(dict)) "Inconsistent vector length."
@@ -24,7 +25,9 @@ struct MCMCDraws
     end
 end
 
-MCMCDraws(pairs::Pair{Symbol, <:AbstractArray}...) = MCMCDraws(MCMCDrawsDict(pairs...))
+MCMCDraws(pairs::Pair{Symbol, <:AbstractArray}...) = MCMCDraws(MCMCDrawsDict(pairs))
+
+MCMCDraws(itr) = MCMCDraws(MCMCDrawsDict(itr))
 
 Base.length(draws::MCMCDraws) = length(first(values(draws.dict)))
 
@@ -32,18 +35,78 @@ Base.keys(draws::MCMCDraws) = sort!(collect(keys(draws.dict)))
 
 Base.getindex(draws::MCMCDraws, var::Symbol) = draws.dict[var]
 
-function is_same_keys(draws1::MCMCDraws, draws_rest::MCMCDraws...)
-    keys1 = keys(draws1)
-    all(keys(draws) == keys1 for draws in draws_rest)
+"""
+Test if all keys of `itr` are the same.
+"""
+function all_same_keys(itr)
+    @argcheck !isempty(itr)
+    keys1 = keys(first(itr))
+    all(keys(draws) == keys1 for draws in drop(itr, 1))
 end
 
-"""
-Pool MCMC draws into a single structure.
-"""
-function pool(draws::MCMCDraws...)
-    @argcheck is_same_keys(draws...) "Incompatible variable names."
-    pooled(key) = key => vcat((draw[key] for draw in draws)...)
-    MCMCDraws((pooled(key) for key in keys(first(draws)))...)
+const MCMCIndex = AbstractVector{Int}
+
+"Test if `index` is valid for MCMC (nonempty, positive, increasing)."
+function is_valid_index(index::MCMCIndex)
+    !isempty(index) && first(index) > 0 && issorted(index)
 end
+
+const MCMCChainMeta = Dict{Symbol, Any}
+
+"""
+Markov Chain Monte Carlo draws with additional information.
+
+# Fields
+
+- `index` is an `AbstractVector` of integers, for indexing
+  draws. Usually a `UnitRange` like `1000:2000`, or a `StepRange`
+  `5000:10:10000` for a thinned sample.
+
+- first `discard` elements of `index` are not meant to be used for
+  posterior inference (because they are part of the adaptation, or
+  burn-in). These are discarded when pooled.
+
+- `draws`: vectors and variable names, see `MCMCDraws`.
+
+- `meta`: a dictionary indexed by symbols, for other metadata, related
+  to sampling (eg mass matrix, adaptation information, information for
+  useful continuation of sampling, etc).
+
+# Usage
+
+Use this structure (or a collection of them) for convergence analysis.
+
+Pool a collection of these structures for posterior inference (and
+predictive checks, etc).
+"""
+struct MCMCChain
+    index::MCMCIndex
+    discard::Int
+    draws::MCMCDraws
+    meta::MCMCChainMeta
+    function MCMCChain(index, discard, draws, meta)
+        @argcheck is_valid_index(index) "Invalid index."
+        @argcheck length(index) == length(draws) "Inconsistent lengths."
+        @argcheck 0 ≤ discard ≤ length(index)
+        new(index, discard, draws, meta)
+    end
+end
+
+@forward MCMCChain.draws Base.keys, Base.length, Base.getindex
+
+# this is the preferred interface
+MCMCChain(draws::MCMCDraws; discard = 0, index = (1:length(draws))+discard,
+          meta = MCMCChainMeta()) = MCMCChain(index, discard, draws, meta)
+
+"""
+Pool MCMC draws into a single structure. 
+"""
+function pool(itr)
+    @argcheck all_same_keys(itr) "Incompatible variable names."
+    MCMCDraws(MCMCDrawsDict(key => vcat((@view(c[key][(c.discard+1):end]) for c in itr)...)
+                            for key in keys(first(itr))))
+end
+
+pool(chains::MCMCChain...) = pool(chains)
 
 end # module
