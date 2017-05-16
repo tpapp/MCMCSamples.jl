@@ -3,7 +3,8 @@ module MCMCSamples
 using ArgCheck
 
 export
-    MCMCDraws
+    MCMCDraws,
+    pool
 
 ######################################################################
 # collections of draws
@@ -31,7 +32,18 @@ Base.keys(draws::MCMCDraws) = sort!(collect(keys(draws.dict)))
 
 Base.getindex(draws::MCMCDraws, var::Symbol) = draws.dict[var]
 
-function is_same_vars(draws1::MCMCDraws, draws_rest::MCMCDraws...)
-    vn1 = varnames(draws1)
-    all(varnames(draws) == v1 for draws in draws_rest)
+function is_same_keys(draws1::MCMCDraws, draws_rest::MCMCDraws...)
+    keys1 = keys(draws1)
+    all(keys(draws) == keys1 for draws in draws_rest)
 end
+
+"""
+Pool MCMC draws into a single structure.
+"""
+function pool(draws::MCMCDraws...)
+    @argcheck is_same_keys(draws...) "Incompatible variable names."
+    pooled(key) = key => vcat((draw[key] for draw in draws)...)
+    MCMCDraws((pooled(key) for key in keys(first(draws)))...)
+end
+
+end # module
