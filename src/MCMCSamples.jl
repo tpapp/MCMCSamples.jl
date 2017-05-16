@@ -13,7 +13,22 @@ const MCMCDrawsVector = AbstractVector
 const MCMCDrawsDict = Dict{Symbol, MCMCDrawsVector}
 
 """
-Structure for storing 
+Structure for storing MCMC draws.
+
+# Interface
+
+Draws are `AbstractVector`s, indexed by `Symbol`s. Uniform length is
+enforced. `keys` are ordered, allowing determnistic traversal, but
+this is not guaranteed in the internals.
+
+# Usage
+
+Use this structure as a collection of vectors which are ordered so
+that corresponding elements match, but the contents are not
+necessarily contiguous or come from the same chain — ie a pooled
+sample. Useful for posterior inference and predictive checks.
+
+For convergence analysis, use `MCMCChains`.
 """
 struct MCMCDraws
     dict::MCMCDrawsDict
@@ -64,7 +79,7 @@ Markov Chain Monte Carlo draws with additional information.
 
 - first `discard` elements of `index` are not meant to be used for
   posterior inference (because they are part of the adaptation, or
-  burn-in). These are discarded when pooled.
+  burn-in, etc). These are discarded when pooled.
 
 - `draws`: vectors and variable names, see `MCMCDraws`.
 
@@ -99,12 +114,12 @@ MCMCChain(draws::MCMCDraws; discard = 0, index = (1:length(draws))+discard,
           meta = MCMCChainMeta()) = MCMCChain(index, discard, draws, meta)
 
 """
-Pool MCMC draws into a single structure. 
+Pool MCMC draws into a single `MCMCDraws` structure. 
 """
 function pool(itr)
     @argcheck all_same_keys(itr) "Incompatible variable names."
-    MCMCDraws(MCMCDrawsDict(key => vcat((@view(c[key][(c.discard+1):end]) for c in itr)...)
-                            for key in keys(first(itr))))
+    MCMCDraws(key => vcat((@view(c[key][(c.discard+1):end]) for c in itr)...)
+              for key in keys(first(itr)))
 end
 
 pool(chains::MCMCChain...) = pool(chains)
